@@ -1,55 +1,62 @@
-//Global vars - can be used anywhere in the pipeline
-def appImage
-def dbImage
 pipeline {
     agent any
     environment {
-        // Use your DockerHub username
-        dockerUserName="tuesday0406"
-        // Names of your Docker images
-        imageNameApp = "trio-task-flask-app-dev-work"
-        imageNameDb = "trio-task-mysql-dev-work"
-        // Constructed registry paths
-        registryApp = "${dockerUserName}/${imageNameApp}"
-        registryDb = "${dockerUserName}/${imageNameDb}"
-        registryCredentials = 'dockerhub'
-        secret_var = credentials('db-password')
+        DOCKERHUB_CREDS = credentials('dockerhub')
+        DB_PASSWORD = credentials('db-password')
+        VERSION = "v1"
+        OLD_VERSION = "v1"
     }
     stages {
-        stage('Init') {
+        stage ('Build Images') {
             steps {
-            script {
-                sh 'docker rm -f $(docker ps -qa) || true'
-                sh 'docker network create trio-task-network || true'
-                sh 'docker volume create new-volume'
-                }
+                sh "docker build -t ${DOCKERHUB_CREDS_USR}/task2-flask-app:${VERSION} Task2/flask-app"
+                sh "docker build -t ${DOCKERHUB_CREDS_USR}/task2-db:${VERSION} Task2/db"
             }
         }
-        stage('Build and Run Containers') {
+        stage ('Deploy Containers') {
             steps {
-                script {
-                    // Build the custom images
-                    appImage = docker.build("${registryApp}:${env.BUILD_NUMBER}", "flask-app")
-                    dbImage = docker.build("${registryDb}:${env.BUILD_NUMBER}", "db")
-                    // Run containers
-                    dbImage.run("-d --name mysql --network trio-task-network -v new-volume:/var/lib/mysql")
-                    appImage.run("-d -e MYSQL_ROOT_PASSWORD=${secret_var} --name flask-app --network trio-task-network")
-                    // Use standard Nginx image and bind mount for custom configuration
-                    docker.image('nginx:latest').run("-d --name nginx -p 80:80 --network trio-task-network -v \$(pwd)/nginx/nginx.conf:/etc/nginx/nginx.conf")
-                }
+                sh "docker network create task2-net || true"
+                sh "docker volume create task2-vol || true"
+                sh "docker rm -f \$(docker ps -aq) || true"
+                sh '''
+                docker run -d \
+                --network task2-net \
+                -e MYSQL_ROOT_PASSWORD=${DB_PASSWORD} \
+                -v task2-vol:/var/lib/mysql \
+                --name mysql \
+                ${DOCKERHUB_CREDS_USR}/task2-db:${VERSION}
+                '''
+                sh '''
+                docker run -d \
+                --network task2-net \
+                -e MYSQL_ROOT_PASSWORD=${DB_PASSWORD} \
+                --name flask-app \
+                ${DOCKERHUB_CREDS_USR}/task2-flask-app:${VERSION}
+                '''
+                sh '''
+                docker run -d \
+                --network task2-net \
+                --mount type=bind,source=\$(pwd)/Task2/nginx/nginx.conf,target=/etc/nginx/nginx.conf \
+                --name nginx \
+                -p 80:80 \
+                nginx:latest
+                '''
             }
         }
-        stage('Push Images to DockerHub') {
+        stage ('Push Images') {
             steps {
-                script {
-                    docker.withRegistry('', registryCredentials) {
-                        appImage.push("${env.BUILD_NUMBER}")
-                        appImage.push("latest")
-                        dbImage.push("${env.BUILD_NUMBER}")
-                        dbImage.push("latest")
-                    }
-                }
+                sh "docker login -u ${DOCKERHUB_CREDS_USR} -p ${DOCKERHUB_CREDS_PSW}"
+                sh "docker push ${DOCKERHUB_CREDS_USR}/task2-flask-app:${VERSION}"
+                sh "docker push ${DOCKERHUB_CREDS_USR}/task2-db:${VERSION}"
+                sh "docker logout"
             }
+        }
+    }
+    post {
+        always {
+            cleanWs()
+            sh "docker rmi ${DOCKERHUB_CREDS_USR}/task2-flask-app:${OLD_VERSION} || true"
+            sh "docker rmi ${DOCKERHUB_CREDS_USR}/task2-db:${OLD_VERSION} || true"
         }
     }
 }
