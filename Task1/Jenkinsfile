@@ -32,8 +32,8 @@ pipeline {
     post {
         always {
             cleanWs()
-            sh "docker rmi ${DOCKERHUB_CREDS_USR}/task1-flask-app:${VERSION}"
-            sh "docker rmi ${DOCKERHUB_CREDS_USR}/task1-nginx:${VERSION}"
+            sh "docker rmi ${DOCKERHUB_CREDS_USR}/task1-flask-app:${OLD_VERSION} || true"
+            sh "docker rmi ${DOCKERHUB_CREDS_USR}/task1-nginx:${OLD_VERSION} || true"
         }
     }
 }
